@@ -1,0 +1,70 @@
+// HP LaserJet 1010 / 1012 - FastRaster driver for macOS.
+// Compile: ppdc -d out hp1010fr.drv
+
+#include <font.defs>
+#include <media.defs>
+
+#define FILTER "/Library/Printers/HP1010FastRaster/Filters/rastertolj1010"
+
+Manufacturer "HP"
+Version "1.0"
+DriverType custom
+ManualCopies Yes
+ColorDevice No
+Throughput 12
+Filter application/vnd.cups-raster 0 "$FILTER"
+
+// 4.2 mm unprintable border, as in HPLIP
+HWMargins 12 12 12 12
+VariablePaperSize Yes
+MinSize 3in 5in
+MaxSize 8.5in 14in
+
+ColorModel Gray/Grayscale k chunky 0
+*Resolution k 8 0 0 0 "600dpi/600 DPI"
+
+*MediaSize A4
+MediaSize Letter
+MediaSize Legal
+MediaSize Executive
+MediaSize A5
+MediaSize A6
+MediaSize B5
+MediaSize Env10
+MediaSize EnvDL
+MediaSize EnvC5
+MediaSize EnvMonarch
+MediaSize Postcard
+
+Option "Density/Toner Density" PickOne AnySetup 10
+  Choice "1/1 (lightest)" ""
+  Choice "2/2" ""
+  *Choice "3/3 (printer default)" ""
+  Choice "4/4" ""
+  Choice "5/5 (darkest)" ""
+
+Option "EconoMode/EconoMode (toner saving)" Boolean AnySetup 10
+  *Choice "False/Off" ""
+  Choice "True/On" ""
+
+Option "Halftone/Halftoning" PickOne AnySetup 10
+  *Choice "Diffusion/Error diffusion (photos, gray)" ""
+  Choice "Threshold/Threshold (text, line art)" ""
+
+{
+  ModelName "LaserJet 1010 FastRaster"
+  Attribute NickName "" "HP LaserJet 1010 FastRaster"
+  Attribute ShortNickName "" "HP LaserJet 1010 FR"
+  Attribute Product "" "(HP LaserJet 1010)"
+  Attribute 1284DeviceID "" "MFG:Hewlett-Packard;MDL:hp LaserJet 1010;CMD:PJL,MLC,BIDI-ECP,DW-PCL;"
+  PCFileName "hp1010fr.ppd"
+}
+
+{
+  ModelName "LaserJet 1012 FastRaster"
+  Attribute NickName "" "HP LaserJet 1012 FastRaster"
+  Attribute ShortNickName "" "HP LaserJet 1012 FR"
+  Attribute Product "" "(HP LaserJet 1012)"
+  Attribute 1284DeviceID "" "MFG:Hewlett-Packard;MDL:hp LaserJet 1012;CMD:PJL,MLC,BIDI-ECP,DW-PCL;"
+  PCFileName "hp1012fr.ppd"
+}

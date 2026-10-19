@@ -1,0 +1,25 @@
+#!/bin/sh
+# Register the PPDs with macOS and add a print queue for every LaserJet
+# 1010/1012 plugged in over USB. Runs as the .pkg postinstall script and from
+# install.sh; safe to re-run.
+
+DEST=/Library/Printers/HP1010FastRaster
+PPDDIR=/Library/Printers/PPDs/Contents/Resources
+
+mkdir -p "$PPDDIR"
+for f in "$DEST"/PPDs/HP*.gz; do
+    install -o root -g wheel -m 644 "$f" "$PPDDIR/"
+done
+
+lpinfo --include-schemes usb -v 2>/dev/null | awk '{print $2}' |
+    grep -E 'LaserJet%20101[02]' | while read -r uri; do
+    model=$(echo "$uri" | sed -E 's/.*LaserJet%20(101[02]).*/\1/')
+    queue="HP_LaserJet_$model"
+    if lpadmin -p "$queue" -E -v "$uri" \
+        -P "$PPDDIR/HP LaserJet $model FastRaster.gz" \
+        -D "HP LaserJet $model" -L "USB" \
+        -o printer-is-shared=false; then
+        echo "Added printer $queue ($uri)"
+    fi
+done
+exit 0
