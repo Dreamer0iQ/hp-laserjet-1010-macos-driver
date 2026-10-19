@@ -135,23 +135,23 @@ def main(path, prefix):
         ys = [y for y, *_ in pg["bands"]]
         assert ys == list(range(0, 128 * len(ys), 128)), f"band offsets {ys[:5]}..."
         height = max(y + h for y, h, *_ in pg["bands"])
-        # Rows are rw = W rounded up to 8 *bytes* (HPLIP quirk, declared width
-        # rw*8 px); real pixels are only the first ceil(rw/8) bytes of each row.
-        stride = (rw + 7) // 8
+        # HPLIP declares 8x the real width (rows of W bytes, pixels only in the
+        # first W/8); rastertolj1010 declares the real width. Keep real pixels.
+        stride = (rw + 7) // 8 if rw * 8 > 20000 else rw
         canvas = bytearray(b"\xff" * (stride * height))
         for y, h, brw, pix in pg["bands"]:
             for r in range(h):
                 row = pix[r * brw:r * brw + stride]
                 canvas[(y + r) * stride:(y + r + 1) * stride] = bytes(b ^ 0xFF for b in row)
-        img = Image.frombytes("1", (rw, height), bytes(canvas))
+        img = Image.frombytes("1", (stride * 8, height), bytes(canvas))
         tail = bytes(b for _, h, brw, pix in pg["bands"] for r in range(h)
                      for b in pix[r * brw + stride:(r + 1) * brw])
         assert not any(tail), "data beyond the declared real width"
         out = f"{prefix}-p{i}.png"
         img.save(out)
         black = sum(bin(b ^ 0xFF).count("1") for b in canvas)
-        print(f"page {i}: media={pg['media']} {rw}x{height} px, {len(pg['bands'])} bands, "
-              f"{black / (rw * height) * 100:.2f}% black -> {out}")
+        print(f"page {i}: media={pg['media']} {stride * 8}x{height} px, {len(pg['bands'])} bands, "
+              f"{black / (stride * 8 * height) * 100:.2f}% black -> {out}")
     print(f"OK: {len(pages)} page(s), {bands} band(s), stream fully consumed")
 
 

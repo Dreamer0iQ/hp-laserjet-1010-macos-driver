@@ -4,11 +4,14 @@
  * These printers are "host-based": the formatter only understands HP's
  * FastRaster stream, i.e. a PCL XL session whose page content is a sequence
  * of VendorUnique operators, each carrying a 128-row band of 1-bit pixels
- * compressed with DeltaPlus. The stream produced here mirrors HPLIP's
- * hpcups LJFastRaster encapsulator byte for byte, except that the last band
- * of every page is actually sent (HPLIP leaves it in its buffer and prepends
- * it to the next page, which shifts A4 pages and drops the bottom of the last
- * one).
+ * compressed with DeltaPlus. The stream follows HPLIP's hpcups LJFastRaster
+ * encapsulator, with three changes:
+ *   - the last band of every page is sent (HPLIP keeps it buffered and
+ *     prepends it to the next page, shifting A4 pages);
+ *   - rows have their real width instead of HPLIP's 8x (see print_page);
+ *   - a clustered-dot screen replaces error diffusion by default, which
+ *     roughly halves the data on gray pages.
+ * Both of the last two keep dense pages from overrunning the printer.
  *
  * Input:  CUPS raster, 600x600 dpi, 8-bit K (0 = white) or 1-bit K.
  * Output: PJL + PCL XL FastRaster on stdout.
@@ -20,6 +23,7 @@
 #include <cups/ppd.h>
 #include <cups/raster.h>
 #include <fcntl.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +36,11 @@
 #define FR_HEADER_SIZE  25
 #define MEDIA_CUSTOM    96
 
-enum { HT_DIFFUSION, HT_THRESHOLD };
+enum { HT_SCREEN, HT_DIFFUSION, HT_THRESHOLD };
+
+/* Clustered-dot screen thresholds (see build_screen), compared against k * 128. */
+#define SCREEN_SIZE 8
+static int screen[SCREEN_SIZE][SCREEN_SIZE];
 
 /* PCL XL byte sequences, from HPLIP prnt/hpcups/PrinterCommands.h. */
 static const uint8_t FRBeginSession[] = {
@@ -79,7 +87,7 @@ static volatile sig_atomic_t canceled = 0;
 
 static int density = 3;
 static int econo_mode = 0;
-static int halftone = HT_DIFFUSION;
+static int halftone = HT_SCREEN;
 
 static uint8_t *line_buf;   /* one raster line as read from CUPS */
 static uint8_t *band;       /* FR_BAND_HEIGHT rows of `slot` bytes */
@@ -122,7 +130,8 @@ static void read_options(const char *argv5)
     if (ppd && (c = ppdFindMarkedChoice(ppd, "EconoMode")) != NULL)
         econo_mode = !strcmp(c->choice, "True");
     if (ppd && (c = ppdFindMarkedChoice(ppd, "Halftone")) != NULL)
-        halftone = strcmp(c->choice, "Threshold") ? HT_DIFFUSION : HT_THRESHOLD;
+        halftone = !strcmp(c->choice, "Diffusion") ? HT_DIFFUSION :
+                   !strcmp(c->choice, "Threshold") ? HT_THRESHOLD : HT_SCREEN;
 
     if (ppd)
         ppdClose(ppd);
@@ -229,9 +238,56 @@ static void send_band(uint32_t rows, uint32_t slot, uint32_t y_offset)
     put(data, size);
 }
 
+/*
+ * 45-degree clustered-dot screen: two dots per 8x8 tile, centred at (1.5,1.5)
+ * and (5.5,5.5), ~106 lpi at 600 dpi. Pixels darken in order of distance to
+ * the nearest dot centre, so dots grow round and stay clustered (stable on a
+ * laser engine). The pattern repeats every byte, which DeltaPlus encodes as
+ * runs: a page of gray 1 mm grid compresses to 0.95 MB instead of 2.1 MB with
+ * error diffusion, which overran the 1010 (PJL status 30017).
+ */
+static void build_screen(void)
+{
+    double dist[64], angle[64];
+    int order[64];
+
+    for (int i = 0; i < 64; i++) {
+        double x = i % 8, y = i / 8, best = 1e9;
+        for (int ty = -1; ty <= 1; ty++)
+            for (int tx = -1; tx <= 1; tx++)
+                for (int c = 0; c < 2; c++) {
+                    double dx = x - (1.5 + 4 * c + 8 * tx), dy = y - (1.5 + 4 * c + 8 * ty);
+                    if (dx * dx + dy * dy < best - 1e-9) {
+                        best = dx * dx + dy * dy;
+                        angle[i] = atan2(dy, dx);
+                    }
+                }
+        dist[i] = best;
+        order[i] = i;
+    }
+    for (int i = 1; i < 64; i++)                /* insertion sort by (distance, angle) */
+        for (int j = i; j > 0; j--) {
+            int a = order[j - 1], b = order[j];
+            if (dist[a] < dist[b] || (dist[a] == dist[b] && angle[a] <= angle[b]))
+                break;
+            order[j - 1] = b;
+            order[j] = a;
+        }
+    /* black when k > (rank + 0.5) * 255 / 64, i.e. k * 128 > (2 rank + 1) * 255 */
+    for (int r = 0; r < 64; r++)
+        screen[order[r] / 8][order[r] % 8] = (2 * r + 1) * 255;
+}
+
 /* 8-bit K (0 = white) -> 1-bit packed, MSB first, 1 = black. */
 static void halftone_row(const uint8_t *k, uint8_t *out, int w, int y)
 {
+    if (halftone == HT_SCREEN) {
+        const int *thr = screen[y % SCREEN_SIZE];
+        for (int x = 0; x < w; x++)
+            if (k[x] * 128 > thr[x % SCREEN_SIZE])
+                out[x >> 3] |= 0x80 >> (x & 7);
+        return;
+    }
     if (halftone == HT_THRESHOLD) {
         for (int x = 0; x < w; x++)
             if (k[x] >= 128)
@@ -273,7 +329,12 @@ static void halftone_row(const uint8_t *k, uint8_t *out, int w, int y)
 static int print_page(cups_raster_t *ras, const cups_page_header2_t *h, int page)
 {
     uint32_t w = h->cupsWidth, height = h->cupsHeight;
-    uint32_t slot = ((w + 7) / 8) * 8;   /* HPLIP row stride: width rounded to 8, in bytes */
+    /* Row size in bytes, padded to a multiple of 8. HPLIP passes the pixel
+       width here, so its rows are 8x too wide (zeros past w/8): the printer
+       copes, but decoding and buffering the empty tail starves it on dense
+       pages ("Print Overrun", after which a 1010 can stay stuck until a cold
+       reset). Real-width rows print the same and cost the printer 8x less. */
+    uint32_t slot = (((w + 7) / 8 + 7) / 8) * 8;
     int invert = h->cupsColorSpace == CUPS_CSPACE_W || h->cupsColorSpace == CUPS_CSPACE_SW;
     uint32_t y, band_row = 0;
 
@@ -358,6 +419,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, cancel_job);
     setvbuf(stdout, NULL, _IOFBF, 1 << 16);
     read_options(argv[5]);
+    build_screen();
 
     ras = cupsRasterOpen(fd, CUPS_RASTER_READ);
     while (!canceled && cupsRasterReadHeader2(ras, &header)) {

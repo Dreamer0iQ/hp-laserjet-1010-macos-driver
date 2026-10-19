@@ -32,14 +32,22 @@ Uninstall: `sudo /Library/Printers/HP1010FastRaster/uninstall.sh`
 - **LaserJet 1012**: same protocol, should work (untested, reports welcome).
 - **LaserJet 1015**: not needed, it supports PCL 5e. Use macOS's built-in *HP LaserJet Series PCL 4/5*.
 
+## Troubleshooting
+
+**The green light blinks forever and no paper is fed.** This usually follows an earlier
+error. Press **Cancel Job**, then cold-reset the printer: switch it off, hold **Go** while
+switching it on, and release after 10–20 s, once the lights start cycling. Don't hold it
+longer than 30 s: that clears NVRAM, including the serial number.
+
 ## How it works
 
-`rastertolj1010` is a CUPS filter. It takes the 600 dpi gray page from macOS, dithers it to
+`rastertolj1010` is a CUPS filter. It takes the 600 dpi gray page from macOS, screens it to
 1 bit, splits it into 128-row bands compressed with HP's DeltaPlus scheme, and wraps them in
 PJL + PCL XL `VendorUnique` operators. The protocol and compressor come from
 [HPLIP](https://developers.hp.com/hp-linux-imaging-and-printing). The compressor is verified
-byte for byte against HP's original. `make test` renders a test page through CUPS and
-decodes the result back to PNG.
+byte for byte against HP's original. Unlike HPLIP, the driver sends real-width rows and uses
+a clustered-dot screen, so dense pages don't overrun the printer. `make test` renders a test
+page through CUPS and decodes the result back to PNG.
 
 ## Credits
 
@@ -54,3 +62,6 @@ License: [BSD 3-Clause](LICENSE).
 из [Releases](https://github.com/Dreamer0iQ/hp-laserjet-1010-macos-driver/releases/latest)
 и откройте его. Если macOS ругается, зайдите в «Системные настройки → Конфиденциальность и
 безопасность» и нажмите «Всё равно открыть». Принтер появится сам, печать через ⌘P.
+Если принтер бесконечно мигает зелёным и не берёт лист, нажмите Cancel Job, потом
+выключите его, зажмите Go и включите. Отпустите через 10–20 секунд, когда лампочки побегут
+по кругу (дольше 30 секунд не держите).

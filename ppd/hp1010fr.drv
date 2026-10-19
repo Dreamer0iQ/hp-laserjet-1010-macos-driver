@@ -48,7 +48,8 @@ Option "EconoMode/EconoMode (toner saving)" Boolean AnySetup 10
   Choice "True/On" ""
 
 Option "Halftone/Halftoning" PickOne AnySetup 10
-  *Choice "Diffusion/Error diffusion (photos, gray)" ""
+  *Choice "Screen/Screen (documents, graphics)" ""
+  Choice "Diffusion/Error diffusion (photos; dense pages may overrun)" ""
   Choice "Threshold/Threshold (text, line art)" ""
 
 {
